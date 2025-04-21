@@ -4,7 +4,7 @@ import _ from "underscore";
 import * as Lib from "metabase-lib";
 
 import { EDITOR_FK_SYMBOLS } from "./config";
-import { ResolverError } from "./errors";
+import { CompileError } from "./errors";
 import { getDisplayNameWithSeparator } from "./identifier";
 import type { Node } from "./pratt";
 import type { ExpressionType } from "./types";
@@ -36,11 +36,11 @@ export function resolver(options: Options): Resolver {
       // Return metrics
       const dimension = findByName([...metrics(), ...columns()]);
       if (!dimension) {
-        throw new ResolverError(t`Unknown Metric: ${name}`, node);
+        throw new CompileError(t`Unknown Metric: ${name}`, node);
       } else if (!Lib.isMetricMetadata(dimension)) {
         // If no metric was found, but there is a matching column,
         // show a more sophisticated error message
-        throw new ResolverError(
+        throw new CompileError(
           c(
             "{0} is an identifier of the field provided by user in a custom expression",
           )
@@ -58,7 +58,7 @@ export function resolver(options: Options): Resolver {
         ...columns().filter(Lib.isBoolean),
       ]);
       if (!dimension) {
-        throw new ResolverError(
+        throw new CompileError(
           t`Unknown Segment or boolean Field: ${name}`,
           node,
         );
@@ -73,9 +73,9 @@ export function resolver(options: Options): Resolver {
     ]);
     if (!dimension) {
       if (startRule === "aggregation") {
-        throw new ResolverError(t`Unknown Field or Metric: ${name}`, node);
+        throw new CompileError(t`Unknown Field or Metric: ${name}`, node);
       }
-      throw new ResolverError(t`Unknown Field: ${name}`, node);
+      throw new CompileError(t`Unknown Field: ${name}`, node);
     }
     return dimension;
   };
