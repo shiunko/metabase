@@ -32,7 +32,9 @@ export class Token {
     this.text = text;
     this.value = value;
   }
-
+  get len(): number {
+    return this.length;
+  }
   get start(): number {
     return this.pos;
   }
