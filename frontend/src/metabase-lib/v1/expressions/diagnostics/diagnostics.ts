@@ -5,7 +5,7 @@ import type Metadata from "metabase-lib/v1/metadata/Metadata";
 
 import { type CompileResult, compileExpression } from "../compiler";
 import { DiagnosticError, type ExpressionError, renderError } from "../errors";
-import { lexify } from "../pratt";
+import { type Token, lexify } from "../pratt";
 import type { StartRule } from "../types";
 
 import { checkArgCount } from "./check-arg-count";
@@ -50,7 +50,16 @@ export function diagnoseAndCompile({
   expressionIndex?: number;
 }): CompileResult {
   try {
-    diagnoseExpressionSyntax({ source });
+    if (!source || source.length === 0) {
+      throw new DiagnosticError(t`Expression is empty`);
+    }
+
+    const { tokens, errors } = lexify(source);
+    if (errors && errors.length > 0) {
+      throw errors[0];
+    }
+
+    diagnoseExpressionSyntax({ source, tokens });
 
     // make a simple check on expression syntax correctness
     const result = compileExpression({
@@ -92,16 +101,13 @@ const syntaxChecks = [
   checkMissingCommasInArgumentList,
 ];
 
-export function diagnoseExpressionSyntax({ source }: { source: string }) {
-  if (!source || source.length === 0) {
-    throw new DiagnosticError(t`Expression is empty`);
-  }
-
-  const { tokens, errors } = lexify(source);
-  if (errors && errors.length > 0) {
-    throw errors[0];
-  }
-
+export function diagnoseExpressionSyntax({
+  source,
+  tokens,
+}: {
+  source: string;
+  tokens: Token[];
+}) {
   syntaxChecks.forEach((check) => check(tokens, source));
 }
 
