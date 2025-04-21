@@ -1,6 +1,6 @@
 import { compileExpression } from "./compiler";
 import { query } from "./test/shared";
-import type { StartRule } from "./types";
+import type { ExpressionType, StartRule } from "./types";
 
 describe("resolve", () => {
   function collect(source: string, startRule: StartRule = "expression") {
@@ -15,20 +15,16 @@ describe("resolve", () => {
       startRule,
       query,
       stageIndex,
-      resolver(kind: string, name: string) {
-        switch (kind) {
-          case "field":
-            fields.push(name);
-            break;
-          case "segment":
-            segments.push(name);
-            break;
-          case "metric":
-            metrics.push(name);
-            break;
+      resolver(type: ExpressionType, name: string) {
+        if (type === "boolean") {
+          segments.push(name);
+        } else if (type === "aggregation") {
+          metrics.push(name);
+        } else {
+          fields.push(name);
         }
         return {
-          operator: kind,
+          operator: "dimension",
           options: {},
           args: [name],
         } as any;

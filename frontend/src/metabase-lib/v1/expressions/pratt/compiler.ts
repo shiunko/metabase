@@ -11,7 +11,7 @@ import {
   isIntegerLiteral,
   isStringLiteral,
 } from "../matchers";
-import type { Kind, Resolver } from "../resolver";
+import type { Resolver } from "../resolver";
 import type { ExpressionType, StartRule } from "../types";
 
 import {
@@ -58,7 +58,7 @@ export function compile(node: Node, options: Options) {
   });
 }
 
-function fallbackResolver(_kind: Kind, name: string, _node?: Node) {
+function fallbackResolver(_kind: ExpressionType, name: string, _node?: Node) {
   return {
     operator: "dimension" as Lib.ExpressionOperator,
     options: {},
@@ -113,22 +113,10 @@ function compileValue(
   };
 }
 
-function getKindForType(type: ExpressionType): Kind {
-  switch (type) {
-    case "boolean":
-      return "segment";
-    case "aggregation":
-      return "metric";
-    default:
-      return "field";
-  }
-}
-
 function compileDimension(name: string, node: Node, ctx: Context) {
   assert(typeof name === "string", t`Invalid dimension name: ${name}`);
 
-  const kind = getKindForType(ctx.type);
-  const dimension = ctx.resolver(kind, name, node);
+  const dimension = ctx.resolver(ctx.type, name, node);
   return withNode(node, dimension);
 }
 
