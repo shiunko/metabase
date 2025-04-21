@@ -89,20 +89,48 @@ function nameMatcher(
     dimension: Dimension,
   ) => Lib.ColumnDisplayInfo | Lib.MetricDisplayInfo | Lib.SegmentDisplayInfo,
 ): (dimensions: Dimension[]) => Dimension | undefined {
-  return (dimensions) =>
-    dimensions.find((dimension) => {
-      if (Lib.isColumnMetadata(dimension)) {
-        return EDITOR_FK_SYMBOLS.symbols.some(
-          (separator) =>
-            name ===
-            getDisplayNameWithSeparator(
-              info(dimension).longDisplayName,
-              separator,
-            ),
-        );
+  function byName({
+    preserveSeparators,
+    caseSensitive,
+  }: {
+    preserveSeparators: boolean;
+    caseSensitive: boolean;
+  }) {
+    return (dimension: Dimension) => {
+      if (preserveSeparators || !Lib.isColumnMetadata(dimension)) {
+        return equals(caseSensitive, name, info(dimension).longDisplayName);
       }
-      return info(dimension).displayName.toLowerCase() === name.toLowerCase();
-    });
+
+      // When exact = false, we allow matching columns on other separators,
+      // ie. [User.ID] will match [User → ID]
+      return EDITOR_FK_SYMBOLS.symbols.some((separator) =>
+        equals(
+          caseSensitive,
+          name,
+          getDisplayNameWithSeparator(
+            info(dimension).longDisplayName,
+            separator,
+          ),
+        ),
+      );
+    };
+  }
+
+  // Match the exact matches first,
+  // then match exact matches ignoring case,
+  // then match matches with different separators
+  // prettier-ignore
+  return (dimensions) =>
+    dimensions.find(byName({ preserveSeparators: true, caseSensitive: true })) ??
+    dimensions.find(byName({ preserveSeparators: true, caseSensitive: false })) ??
+    dimensions.find(byName({ preserveSeparators: false, caseSensitive: false }));
+}
+
+function equals(caseSensitive: boolean, a: string, b: string) {
+  if (caseSensitive) {
+    return a === b;
+  }
+  return a.toLowerCase() === b.toLowerCase();
 }
 
 function infoCache(options: Options) {
