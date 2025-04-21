@@ -8,6 +8,8 @@
   (:refer-clojure :exclude [set!])
   (:require
    [clojure.java.jmx :as jmx]
+   [clojurewerkz.quartzite.matchers :as qm]
+   [clojurewerkz.quartzite.scheduler :as qs]
    [iapetos.collector :as collector]
    [iapetos.collector.ring :as collector.ring]
    [iapetos.core :as prometheus]
@@ -15,6 +17,7 @@
    [jvm-hiccup-meter.core :as hiccup-meter]
    [metabase.analytics.settings :refer [prometheus-server-port]]
    [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn]
+   [metabase.task :as task]
    [metabase.util :as u]
    [metabase.util.i18n :refer [trs]]
    [metabase.util.log :as log]
@@ -23,11 +26,16 @@
    [ring.adapter.jetty :as ring-jetty])
   (:import
    (io.prometheus.client Collector
+                         Collector$MetricFamilySamples
+                         Collector$MetricFamilySamples$Sample
+                         Collector$Type
                          GaugeMetricFamily)
    (io.prometheus.client.hotspot GarbageCollectorExports MemoryPoolsExports StandardExports ThreadExports)
    (java.util ArrayList List)
+   (java.util Collections)
    (javax.management ObjectName)
-   (org.eclipse.jetty.server Server)))
+   (org.eclipse.jetty.server Server)
+   (org.quartz Scheduler Trigger$TriggerState)))
 
 (set! *warn-on-reflection* true)
 
@@ -321,6 +329,64 @@
    (prometheus/counter :metabase-gsheets/connection-deleted
                        {:description "How many times the instance has deleted their Google Sheets connection."})])
 
+(defn- get-quartz-task-states
+  "Fetches the counts of Quartz tasks in various states."
+  []
+  (try
+    (let [^Scheduler scheduler (task/scheduler)]
+      (when scheduler
+        (let [executing-count (count (.getCurrentlyExecutingJobs scheduler))
+              state-counts    (->> (qs/get-trigger-group-names scheduler)
+                                   (map #(qm/group-equals %))
+                                   (mapcat #(qs/get-trigger-keys scheduler %))
+                                   (group-by #(.getTriggerState scheduler %))
+                                   (into {} (map (fn [[state keys]] [state (count keys)]))))]
+          ;; Combine executing count with counts derived from trigger states
+          (concat
+           [["EXECUTING" executing-count]]
+           (keep (fn [[quartz-state state-label]]
+                   (when-let [count (get state-counts quartz-state)]
+                     [state-label count]))
+                 [[Trigger$TriggerState/NORMAL "WAITING"]
+                  [Trigger$TriggerState/PAUSED "PAUSED"]
+                  [Trigger$TriggerState/BLOCKED "BLOCKED"]
+                  [Trigger$TriggerState/ERROR "ERROR"]])))))
+    (catch Throwable e
+      (log/error e "Error fetching Quartz task states for Prometheus")
+      []))) ; Return empty list on error to avoid breaking scrape
+
+(defn- quartz-stats
+  []
+  (let [stats (get-quartz-task-states)
+        value-array (ArrayList. (count stats))]
+    (doseq [[code code-value] stats]
+      (.add value-array
+            (Collector$MetricFamilySamples$Sample.
+             "quartz_task_states"
+             (Collections/singletonList "state")
+             (Collections/singletonList code)
+             code-value)))
+    (doto (ArrayList. 1)
+      (.add (Collector$MetricFamilySamples. "quartz_task_states"
+                                            Collector$Type/GAUGE
+                                            "number of tasks in a given quartz state"
+                                            value-array)))))
+
+(def ^:private -quartz-collector
+  "quartz collector delay"
+  (delay
+    (collector/named
+     {:name "quartz-stats"
+      :namespace "metabase_tasks"}
+     (proxy [Collector] []
+       (collect
+         ([] (quartz-stats))
+         ([_sampleNameFilter] (quartz-stats)))))))
+
+(defn- quartz-collectors
+  []
+  [@-quartz-collector])
+
 (defmulti known-labels
   "Implement this for a given metric to initialize it for the given set of label values."
   {:arglists '([metric]), :added "0.52.0"}
@@ -362,7 +428,8 @@
                         (concat (jvm-collectors)
                                 (jetty-collectors)
                                 [@c3p0-collector]
-                                (product-collectors)))]
+                                (product-collectors)
+                                (quartz-collectors)))]
     (doseq [{:keys [metric labels value]} (initial-labelled-metric-values)]
       (prometheus/inc registry metric (qualified-vals labels) value))
     (when @jvm-hiccup-thread (@jvm-hiccup-thread))

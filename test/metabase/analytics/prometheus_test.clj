@@ -8,11 +8,14 @@
    [metabase.analytics.core :as analytics]
    [metabase.analytics.prometheus :as prometheus]
    [metabase.search.core :as search]
+   [metabase.task :as task]
    [metabase.test :as mt]
    [metabase.test.fixtures :as fixtures]
    [metabase.util :as u])
   (:import
-   (io.prometheus.client Collector GaugeMetricFamily)))
+   (io.prometheus.client Collector GaugeMetricFamily)
+   (org.quartz JobKey Scheduler Trigger$TriggerState TriggerKey)
+   (org.quartz.impl.matchers GroupMatcher)))
 
 (set! *warn-on-reflection* true)
 
@@ -69,7 +72,8 @@
     "process_max_fds"
     "process_open_fds"
     "process_start_time_seconds"
-    "jetty_request_time_seconds_total"})
+    "jetty_request_time_seconds_total"
+    "quartz_task_states"})
 
 (defn- metric-tags
   "Returns a set of tags of prometheus metrics. Ie logs are
@@ -142,6 +146,98 @@
                                    (metric-lines port))]
         (is (seq (set/intersection expected-lines actual-lines))
             "Registry does not have c3p0 metrics in it")))))
+
+(deftest quartz-collector-test
+  (testing "Registry includes quartz task state stats"
+    (mt/with-prometheus-system! [port _]
+      ;; Mock the function that fetches states to return predictable data
+      (with-redefs [prometheus/get-quartz-task-states (constantly [["EXECUTING" 2]
+                                                                   ["WAITING" 3]
+                                                                   ["PAUSED" 1]])]
+        (let [expected-lines #{;; Note: Prometheus format uses lowercase metric names and adds .0 for gauge values
+                               "quartz_task_states{state=\"EXECUTING\",} 2.0"
+                               "quartz_task_states{state=\"WAITING\",} 3.0"
+                               "quartz_task_states{state=\"PAUSED\",} 1.0"}
+              all-lines      (metric-lines port)
+              actual-lines   (into #{} (filter #(str/starts-with? % "quartz_task_states"))
+                                   all-lines)]
+          (is (= expected-lines actual-lines)
+              "Expected quartz task state metrics not found or incorrect in /metrics output")))))
+
+  (testing "Handles empty state list gracefully"
+    (mt/with-prometheus-system! [port _]
+      (with-redefs [prometheus/get-quartz-task-states (constantly [])] ; Simulate no tasks or error
+        (let [all-lines      (metric-lines port)
+              actual-lines   (into #{} (filter #(str/starts-with? % "quartz_task_states"))
+                                   all-lines)]
+          (is (empty? actual-lines)
+              "Should not output quartz_task_states metrics when the state list is empty"))))))
+
+(deftest get-quartz-task-states-test
+  (testing "Should return counts for various trigger states"
+    (let [mock-scheduler (reify Scheduler
+                           (getCurrentlyExecutingJobs [_] (repeat 2 (Object.))) ; Simulate 2 executing jobs
+                           (getTriggerGroupNames [_] ["group1" "group2"])
+                           (^java.util.Set getTriggerKeys [_ ^GroupMatcher matcher]
+                             (case (.getCompareToValue matcher)
+                               "group1" #{(TriggerKey. "trigger1" "group1") (TriggerKey. "trigger2" "group1")}
+                               "group2" #{(TriggerKey. "trigger3" "group2") (TriggerKey. "trigger4" "group2") (TriggerKey. "trigger5" "group2")}))
+                           (getTriggerState [_ trigger-key]
+                             (case (.getName trigger-key)
+                               "trigger1" Trigger$TriggerState/NORMAL  ; WAITING
+                               "trigger2" Trigger$TriggerState/PAUSED  ; PAUSED
+                               "trigger3" Trigger$TriggerState/BLOCKED ; BLOCKED
+                               "trigger4" Trigger$TriggerState/ERROR   ; ERROR
+                               "trigger5" Trigger$TriggerState/NORMAL  ; WAITING (another one)
+                               Trigger$TriggerState/NONE))) ; Default/fallback
+          expected-states {"EXECUTING" 2
+                           "WAITING"   2
+                           "PAUSED"    1
+                           "BLOCKED"   1
+                           "ERROR"     1}]
+      (binding [task/*quartz-scheduler* (atom mock-scheduler)]
+        (let [result (#'prometheus/get-quartz-task-states)
+              result-map (into {} result)]
+          (is (= expected-states result-map) "Should correctly count jobs in each state")))))
+
+  (testing "Should return only executing count if no other triggers exist"
+    (let [mock-scheduler (reify Scheduler
+                           (getCurrentlyExecutingJobs [_] (repeat 1 (Object.)))
+                           (getTriggerGroupNames [_] []) ; No trigger groups
+                           (getTriggerKeys [_ _] #{})
+                           (getTriggerState [_ _] Trigger$TriggerState/NONE))
+          expected-states {"EXECUTING" 1}]
+      (binding [task/*quartz-scheduler* (atom mock-scheduler)]
+        (let [result (#'prometheus/get-quartz-task-states)
+              result-map (into {} result)]
+          (is (= expected-states result-map) "Should only return EXECUTING count")))))
+
+  (testing "Should return empty list if scheduler is nil"
+    (binding [task/*quartz-scheduler* (atom nil)]
+      (is (= [] (#'prometheus/get-quartz-task-states)) "Should return empty list when scheduler is nil")))
+
+  (testing "Should return empty list and log error if scheduler access throws exception"
+    (let [error-message "Simulated scheduler error"
+          exploding-scheduler (reify Scheduler
+                                (getCurrentlyExecutingJobs [_] (throw (Exception. error-message))))]
+      (binding [task/*quartz-scheduler* (atom exploding-scheduler)]
+        (is (= [] (#'prometheus/get-quartz-task-states)) "Should return empty list on scheduler error"))))
+
+  (testing "Should handle states not explicitly mapped (e.g., COMPLETE, NONE)"
+    (let [mock-scheduler (reify Scheduler
+                           (getCurrentlyExecutingJobs [_] (repeat 1 (Object.)))
+                           (getTriggerGroupNames [_] ["group1"])
+                           (getTriggerKeys [_ _] #{(TriggerKey. "trigger_complete" "group1") (TriggerKey. "trigger_none" "group1")})
+                           (getTriggerState [_ trigger-key]
+                             (case (.getName trigger-key)
+                               "trigger_complete" Trigger$TriggerState/COMPLETE
+                               "trigger_none" Trigger$TriggerState/NONE
+                               Trigger$TriggerState/NORMAL))) ; Default
+          expected-states {"EXECUTING" 1}] ; Only executing should be counted
+      (binding [task/*quartz-scheduler* (atom mock-scheduler)]
+        (let [result (#'prometheus/get-quartz-task-states)
+              result-map (into {} result)]
+          (is (= expected-states result-map) "Should ignore unmapped states like COMPLETE and NONE"))))))
 
 (deftest email-collector-test
   (testing "Registry has email metrics registered"
