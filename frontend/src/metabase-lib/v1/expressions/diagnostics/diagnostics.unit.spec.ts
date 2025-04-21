@@ -351,6 +351,22 @@ describe("diagnostics", () => {
         expect(err(expression)).toBe("Expected a field name");
       });
     });
+
+    describe("bad tokens", () => {
+      it.each([`.`, `1°`, `@`, `#`, `%`, `@`, `(])`])(
+        "should reject bad tokens like %s",
+        (expression) => {
+          expect(err(expression)).toMatch(/^Invalid character/);
+        },
+      );
+
+      it.each([`$#`, `$#@`, `$#@$`, `$#@$#`])(
+        "should reject bad tokens like %s",
+        (expression) => {
+          expect(err(expression)).toMatch(/^Invalid expression/);
+        },
+      );
+    });
   });
 
   describe("diagnoseAndCompile", () => {
