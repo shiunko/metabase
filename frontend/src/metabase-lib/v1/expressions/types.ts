@@ -74,6 +74,7 @@ export type MBQLClauseFunctionConfig = {
 };
 
 export type Hooks = {
+  error?: (error: Error) => void;
   lexified?: (evt: { tokens: Token[] }) => void;
   compiled?: (evt: {
     expressionParts: Lib.ExpressionParts | Lib.ExpressionArg;
