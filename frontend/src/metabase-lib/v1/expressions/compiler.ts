@@ -4,7 +4,7 @@ import type { Expression } from "metabase-types/api";
 import { type ExpressionError, renderError } from "./errors";
 import { compile, lexify, parse } from "./pratt";
 import { type Resolver, resolver as defaultResolver } from "./resolver";
-import type { StartRule } from "./types";
+import type { Hooks, StartRule } from "./types";
 
 export type CompileResult =
   | {
@@ -30,26 +30,34 @@ export function compileExpression({
     stageIndex,
     startRule,
   }),
+  hooks = {},
 }: {
   source: string;
   startRule: StartRule;
   query: Lib.Query;
   stageIndex: number;
   resolver?: Resolver | null;
+  hooks?: Hooks;
 }): CompileResult {
   try {
     const { tokens } = lexify(source);
+
+    hooks.lexified?.({ tokens });
+
     const { root } = parse(tokens, { throwOnError: true });
     const expressionParts = compile(root, {
       startRule,
       resolver,
     });
+
     const expressionClause = Lib.expressionClause(expressionParts);
     const expression = Lib.legacyExpressionForExpressionClause(
       query,
       stageIndex,
       expressionClause,
     );
+
+    hooks.compiled?.({ expressionClause, expressionParts });
 
     return {
       expression,
