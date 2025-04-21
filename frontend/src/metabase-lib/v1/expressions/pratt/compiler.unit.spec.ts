@@ -1,5 +1,7 @@
 import type * as Lib from "metabase-lib";
 
+import { maybe } from "../utils";
+
 import { compile, lexify, parse } from ".";
 
 function value(value: unknown, options: Lib.ExpressionOptions = {}) {
@@ -23,11 +25,10 @@ function text(x: string) {
 
 describe("pratt/compiler", () => {
   function expr(source: string) {
-    const ast = parse(lexify(source).tokens, {
-      throwOnError: true,
-    });
+    const { tokens } = maybe(lexify(source));
+    const { root } = maybe(parse(tokens));
 
-    return compile(ast.root, {
+    return compile(root, {
       startRule: "expression",
     });
   }
