@@ -58,7 +58,7 @@ export function resolver(options: Options): Resolver {
         ...columns().filter(Lib.isBoolean),
       ]);
       if (!dimension) {
-        throw new ResolverError(t`Unknown Segment: ${name}`, node);
+        throw new ResolverError(t`Unknown Segment or Field: ${name}`, node);
       }
       return dimension;
     }
@@ -69,6 +69,9 @@ export function resolver(options: Options): Resolver {
       ...(startRule === "aggregation" ? metrics() : []),
     ]);
     if (!dimension) {
+      if (startRule === "aggregation") {
+        throw new ResolverError(t`Unknown Field or Metric: ${name}`, node);
+      }
       throw new ResolverError(t`Unknown Field: ${name}`, node);
     }
     return dimension;
