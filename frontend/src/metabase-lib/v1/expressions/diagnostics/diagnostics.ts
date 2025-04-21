@@ -16,6 +16,7 @@ import { checkMatchingParentheses } from "./check-matching-parenthesis";
 import { checkMissingCommasInArgumentList } from "./check-missing-comma-in-argument-list";
 import { checkNumberExponent } from "./check-number-exponent";
 import { checkOpenParenthesisAfterFunction } from "./check-open-parenthesis-after-function";
+import { checkStringQuotes } from "./check-string-quotes";
 import { checkSupportedFunctions } from "./check-supported-functions";
 
 type Options = {
@@ -63,6 +64,7 @@ const syntaxChecks = [
   checkMatchingParentheses,
   checkMissingCommasInArgumentList,
   checkNumberExponent,
+  checkStringQuotes,
 ];
 
 export function diagnoseExpressionSyntax(options: {
