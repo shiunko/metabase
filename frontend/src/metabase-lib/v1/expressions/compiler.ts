@@ -5,7 +5,6 @@ import { type ExpressionError, renderError } from "./errors";
 import { compile, lexify, parse } from "./pratt";
 import { type Resolver, resolver as defaultResolver } from "./resolver";
 import type { Hooks, StartRule } from "./types";
-import { maybe } from "./utils";
 
 export type CompileResult =
   | {
@@ -31,7 +30,11 @@ export function compileExpression({
     stageIndex,
     startRule,
   }),
-  hooks = {},
+  hooks = {
+    error(error) {
+      throw error;
+    },
+  },
 }: {
   source: string;
   startRule: StartRule;
@@ -41,10 +44,11 @@ export function compileExpression({
   hooks?: Hooks;
 }): CompileResult {
   try {
-    const { tokens } = maybe(lexify(source));
+    const { tokens } = lexify(source, { hooks });
+
     hooks.lexified?.({ tokens });
 
-    const { root } = maybe(parse(tokens));
+    const { root } = parse(tokens, { hooks });
     const expressionParts = compile(root, {
       startRule,
       resolver,
