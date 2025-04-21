@@ -58,7 +58,10 @@ export function resolver(options: Options): Resolver {
         ...columns().filter(Lib.isBoolean),
       ]);
       if (!dimension) {
-        throw new ResolverError(t`Unknown Segment or Field: ${name}`, node);
+        throw new ResolverError(
+          t`Unknown Segment or boolean Field: ${name}`,
+          node,
+        );
       }
       return dimension;
     }
